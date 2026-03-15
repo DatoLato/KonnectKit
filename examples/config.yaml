@@ -1,0 +1,72 @@
+kafka:
+  base:
+    brokers:
+      - localhost:9092
+      - localhost:9093
+    timeout: 30s
+    dial_timeout: 5s
+    read_timeout: 10s
+    write_timeout: 10s
+
+  # Продюсеры
+  producers:
+    user_events_producer:
+      topic: user-events  # Топик по умолчанию
+      topics:  # Список доступных топиков
+        - name: user-events
+          default_topic: true
+          partitions: 6
+          retention_days: 7
+        - name: user-errors
+          partitions: 3
+          retention_days: 30
+        - name: user-audit
+          partitions: 3
+          retention_days: 90
+
+      required_acks: 1
+      max_retries: 3
+      retry_backoff: 100ms
+      batch_size: 16384
+      batch_timeout: 10ms
+      compression: snappy
+      partitioner: hash  # Распределение по хешу ключа
+
+    order_processor:
+      topic: orders
+      topics:
+        - name: orders
+          default_topic: true
+          partitions: 10
+        - name: order-events
+          partitions: 5
+        - name: order-errors
+          partitions: 3
+
+      required_acks: -1  # Все реплики
+      max_retries: 5
+      partitioner: round-robin  # Равномерное распределение
+
+  # Консюмеры
+  consumers:
+    user_events_consumer:
+      topic: user-events  # Топик по умолчанию
+      topics:  # Список топиков для подписки
+        - name: user-events
+          default_topic: true
+        - name: user-errors
+
+      group_id: user-events-group
+      auto_commit: true
+      session_timeout: 30s
+      start_offset: newest
+
+    order_consumer:
+      topics:  # Можно подписаться на несколько топиков
+        - name: orders
+        - name: order-events
+        - name: order-errors
+
+      group_id: order-processor-group
+      auto_commit: false
+      start_offset: oldest
