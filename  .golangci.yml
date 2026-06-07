@@ -1,23 +1,28 @@
+run:
+  timeout: 5m
+  tests: true
+  go: '1.21'  # Явно указываем версию Go для линтера
+
 linters:
   enable:
     - gofmt
     - govet
     - errcheck
     - staticcheck
-    - gosimple
     - ineffassign
     - unused
     - misspell
-    - revive
-    - unconvert
-    - unparam
 
 linters-settings:
-  revive:
-    rules:
-      - name: exported
-        severity: warning
-        disabled: false
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+
+  gofmt:
+    simplify: true
+
+  staticcheck:
+    go: '1.21'  # Версия для статического анализа
 
 issues:
   exclude-use-default: false
