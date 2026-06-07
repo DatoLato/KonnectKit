@@ -11,7 +11,7 @@ env:
   GO_VERSION: '1.24'
 
 jobs:
-  # Проверка форматирования (упрощенная)
+  # Проверка форматирования
   fmt:
     name: Check formatting
     runs-on: ubuntu-latest
@@ -54,13 +54,13 @@ jobs:
       - name: Verify modules
         run: |
           if [ -n "$(git status --porcelain)" ]; then
-            echo "❌ go mod tidy changed files. Please run 'go mod tidy' and commit changes."
+            echo "❌ go mod tidy changed files"
             git diff
             exit 1
           fi
           echo "✅ Modules are tidy"
 
-  # go vet - базовая проверка (замена линтеру)
+  # go vet
   vet:
     name: Go vet
     runs-on: ubuntu-latest
@@ -76,7 +76,6 @@ jobs:
 
       - name: Run go vet
         run: go vet ./...
-        continue-on-error: false
 
   # Unit тесты
   test:
@@ -94,9 +93,9 @@ jobs:
           cache: true
 
       - name: Run unit tests
-        run: go test -v -race -coverprofile=coverage.out ./...
+        run: go test -v -race -coverprofile=coverage.out $(go list ./... | grep -v '/test/integration')
 
-      - name: Upload coverage
+      - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
           file: ./coverage.out
