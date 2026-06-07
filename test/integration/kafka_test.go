@@ -1,263 +1,168 @@
 package integration
 
 import (
-	"KonnectKit/pkg/kafka"
-	"context"
-	"fmt"
-	"log"
+	"KonnectKit/test/integration/fixtures"
+	"KonnectKit/test/integration/handlers"
+	"KonnectKit/test/integration/suite"
 	"testing"
 	"time"
 
-	"github.com/IBM/sarama"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
-	testcontainer "github.com/testcontainers/testcontainers-go/modules/kafka"
-
-	"KonnectKit/pkg/config"
+	testsuite "github.com/stretchr/testify/suite"
 )
 
-// TestKafkaIntegration - основной интеграционный тест
-func TestKafkaIntegration(t *testing.T) {
-	ctx := context.Background()
-
-	// 1. Запускаем Kafka контейнер
-	kafkaContainer, err := testcontainer.Run(ctx,
-		"confluentinc/confluent-local:7.5.0",
-		testcontainer.WithClusterID("test-cluster"),
-	)
-	require.NoError(t, err)
-
-	// 2. Обеспечиваем остановку контейнера после тестов
-	defer func() {
-		if err := testcontainers.TerminateContainer(kafkaContainer); err != nil {
-			log.Printf("failed to terminate container: %s", err)
-		}
-	}()
-
-	// 3. Получаем адрес брокера
-	brokers, err := kafkaContainer.Brokers(ctx)
-	require.NoError(t, err)
-	require.NotEmpty(t, brokers)
-
-	t.Logf("Kafka broker address: %v", brokers)
-
-	// 4. Создаем тестовый конфиг с динамическим адресом брокера
-	cfg := createTestConfig(brokers[0])
-
-	// 5. Создаем клиент
-	client := kafka.NewClient(cfg)
-	defer client.Close()
-
-	// 6. Запускаем тесты
-	t.Run("Producer and Consumer", func(t *testing.T) {
-		testProducerConsumer(t, client)
-	})
-
-	t.Run("Multiple Topics", func(t *testing.T) {
-		testMultipleTopics(t, client)
-	})
-
-	t.Run("Consumer Group", func(t *testing.T) {
-		testConsumerGroup(t, client)
-	})
+// TestKafkaSuite - запуск тестового suite
+func TestKafkaSuite(t *testing.T) {
+	testsuite.Run(t, new(KafkaTestSuite))
 }
 
-// TestHandler - обработчик для тестов
-type TestHandler struct {
-	msgChan chan *sarama.ConsumerMessage
+// KafkaTestSuite - структура тестов
+type KafkaTestSuite struct {
+	suite.KafkaTestSuite
 }
 
-func (h *TestHandler) HandleMessage(msg *sarama.ConsumerMessage) error {
-	select {
-	case h.msgChan <- msg:
-	default:
-	}
-	return nil
+// TestProducerConsumerSimple - простой тест продюсер-консюмер
+func (s *KafkaTestSuite) TestProducerConsumerSimple() {
+	// Given
+	handler := handlers.NewTestHandler(10)
+	consumer := s.CreateTestConsumer(handler)
+	producer := s.CreateTestProducer()
+
+	// When
+	err := consumer.ConsumeTopics([]string{fixtures.TestTopics.Single})
+	s.Require().NoError(err)
+
+	time.Sleep(2 * time.Second) // Ждем инициализации
+
+	_, _, err = producer.Send(fixtures.TestTopics.Single,
+		[]byte("test-key"),
+		fixtures.TestMessages.Simple)
+	s.Require().NoError(err)
+
+	// Then
+	msg, err := handler.WaitForMessage(10 * time.Second)
+	s.Require().NoError(err)
+	assert.Equal(s.T(), fixtures.TestMessages.Simple, msg.Value)
+	assert.Equal(s.T(), "test-key", string(msg.Key))
+
+	// Cleanup
+	consumer.Stop()
 }
 
-// createTestConfig - создает тестовую конфигурацию
-func createTestConfig(broker string) *config.Config {
-	// Загружаем базовый конфиг из YAML
-	cfg, err := config.LoadConfig("testdata/test_config.yaml")
-	if err != nil {
-		panic(err)
-	}
+// TestMultipleTopics - тест с несколькими топиками
+func (s *KafkaTestSuite) TestMultipleTopics() {
+	// Given
+	handler := handlers.NewTestHandler(10)
+	consumer := s.CreateTestConsumer(handler)
+	producer := s.CreateTestProducer()
 
-	// Обновляем адрес брокера во всех конфигурациях
-	cfg.Kafka.Base.Brokers = []string{broker}
+	// When
+	err := consumer.ConsumeTopics(fixtures.TestTopics.Multiple)
+	s.Require().NoError(err)
 
-	for name := range cfg.Kafka.Producer {
-		producer := cfg.Kafka.Producer[name]
-		producer.Brokers = []string{broker}
-		// Устанавливаем таймауты из базовой конфигурации
-		producer.DialTimeout = cfg.Kafka.Base.DialTimeout
-		producer.ReadTimeout = cfg.Kafka.Base.ReadTimeout
-		producer.WriteTimeout = cfg.Kafka.Base.WriteTimeout
-		producer.Timeout = cfg.Kafka.Base.Timeout
-		cfg.Kafka.Producer[name] = producer
-	}
-
-	for name := range cfg.Kafka.Consumer {
-		consumer := cfg.Kafka.Consumer[name]
-		consumer.Brokers = []string{broker}
-		// Устанавливаем таймауты из базовой конфигурации
-		consumer.DialTimeout = cfg.Kafka.Base.DialTimeout
-		consumer.ReadTimeout = cfg.Kafka.Base.ReadTimeout
-		consumer.WriteTimeout = cfg.Kafka.Base.WriteTimeout
-		consumer.Timeout = cfg.Kafka.Base.Timeout
-		cfg.Kafka.Consumer[name] = consumer
-	}
-
-	return cfg
-}
-
-// testProducerConsumer - тест отправки и получения сообщения
-func testProducerConsumer(t *testing.T, client *kafka.Client) {
-	topic := "test-topic"
-
-	// 1. Сначала создаем канал и хендлер
-	msgChan := make(chan *sarama.ConsumerMessage, 1)
-	handler := &TestHandler{msgChan: msgChan}
-
-	// 2. Создаем консюмера
-	cons, err := client.NewConsumer("test_consumer", handler)
-	require.NoError(t, err)
-	defer cons.Stop()
-
-	// 3. Запускаем консюмера ДО отправки сообщения
-	err = cons.ConsumeTopics([]string{topic})
-	require.NoError(t, err)
-
-	// 4. Ждем, пока консюмер подключится к Kafka
 	time.Sleep(2 * time.Second)
-	t.Log("Consumer started and ready")
 
-	// 5. Создаем продюсера
-	prod, err := client.NewProducer("test_producer")
-	require.NoError(t, err)
-
-	// 6. Отправляем сообщение
-	testMessage := []byte("Hello, Kafka!")
-	partition, offset, err := prod.Send(topic, []byte("test-key"), testMessage)
-	require.NoError(t, err)
-
-	t.Logf("Message sent: partition=%d, offset=%d", partition, offset)
-
-	// 7. Ждем получения сообщения
-	select {
-	case msg := <-msgChan:
-		assert.Equal(t, testMessage, msg.Value)
-		assert.Equal(t, "test-key", string(msg.Key))
-		assert.Equal(t, topic, msg.Topic)
-		t.Logf("Message received successfully: %s", string(msg.Value))
-	case <-time.After(15 * time.Second):
-		t.Fatal("Timeout waiting for message")
+	for _, topic := range fixtures.TestTopics.Multiple {
+		msg := []byte("Message for " + topic)
+		_, _, err := producer.Send(topic, []byte("key"), msg)
+		s.Require().NoError(err)
+		s.T().Logf("Sent to %s: %s", topic, string(msg))
 	}
+
+	// Then
+	messages, err := handler.WaitForMessages(len(fixtures.TestTopics.Multiple), 10*time.Second)
+	s.Require().NoError(err)
+
+	receivedTopics := make(map[string]int)
+	for _, msg := range messages {
+		receivedTopics[msg.Topic]++
+	}
+
+	for _, topic := range fixtures.TestTopics.Multiple {
+		assert.Equal(s.T(), 1, receivedTopics[topic], "Topic %s should have 1 message", topic)
+	}
+
+	consumer.Stop()
 }
 
-// testMultipleTopics - тест работы с несколькими топиками
-func testMultipleTopics(t *testing.T, client *kafka.Client) {
-	topics := []string{"topic-1", "topic-2", "topic-3"}
-	receivedCount := make(map[string]int)
-
-	// Канал для получения сообщений
-	msgChan := make(chan *sarama.ConsumerMessage, 10)
-	handler := &TestHandler{msgChan: msgChan}
-
-	// Создаем консюмера
-	cons, err := client.NewConsumer("multi_topic_consumer", handler)
-	require.NoError(t, err)
-	defer cons.Stop()
-
-	// Подписываемся на все топики
-	err = cons.ConsumeTopics(topics)
-	require.NoError(t, err)
-
-	// Создаем продюсера
-	prod, err := client.NewProducer("test_producer")
-	require.NoError(t, err)
-
-	// Отправляем сообщения в разные топики
-	for i, topic := range topics {
-		msg := []byte(fmt.Sprintf("Message %d for %s", i, topic))
-		_, _, err := prod.Send(topic, []byte("key"), msg)
-		require.NoError(t, err)
-		t.Logf("Sent to %s: %s", topic, string(msg))
-	}
-
-	// Ждем получения сообщений
-	timeout := time.After(10 * time.Second)
-	receivedTotal := 0
-	expectedTotal := len(topics)
-
-	for receivedTotal < expectedTotal {
-		select {
-		case msg := <-msgChan:
-			receivedCount[msg.Topic]++
-			receivedTotal++
-			t.Logf("Received from %s: %s", msg.Topic, string(msg.Value))
-		case <-timeout:
-			t.Fatalf("Timeout: received %d/%d messages", receivedTotal, expectedTotal)
-		}
-	}
-
-	// Проверяем, что все топики получили сообщения
-	for _, topic := range topics {
-		assert.Equal(t, 1, receivedCount[topic], "Topic %s should have 1 message", topic)
-	}
-}
-
-// testConsumerGroup - тест consumer group
-func testConsumerGroup(t *testing.T, client *kafka.Client) {
-	topic := "group-test-topic"
+// TestConsumerGroup - тест consumer group
+func (s *KafkaTestSuite) TestConsumerGroup() {
+	// Given
 	messageCount := 10
+	handler1 := handlers.NewTestHandler(messageCount)
+	handler2 := handlers.NewTestHandler(messageCount)
 
-	// Создаем продюсера и отправляем 10 сообщений
-	prod, err := client.NewProducer("test_producer")
-	require.NoError(t, err)
-
-	for i := 0; i < messageCount; i++ {
-		msg := []byte(fmt.Sprintf("Message %d", i))
-		_, _, err := prod.Send(topic, []byte(fmt.Sprintf("key-%d", i)), msg)
-		require.NoError(t, err)
-	}
-	t.Logf("Sent %d messages to %s", messageCount, topic)
-
-	// Создаем два консюмера в одной группе
-	messages1 := make(chan *sarama.ConsumerMessage, messageCount)
-	messages2 := make(chan *sarama.ConsumerMessage, messageCount)
-
-	handler1 := &TestHandler{msgChan: messages1}
-	handler2 := &TestHandler{msgChan: messages2}
-
-	consumer1, err := client.NewConsumer("test_group_consumer", handler1)
-	require.NoError(t, err)
+	consumer1, err := s.GetClient().NewConsumer("test_group_consumer", handler1)
+	s.Require().NoError(err)
 	defer consumer1.Stop()
 
-	consumer2, err := client.NewConsumer("test_group_consumer", handler2)
-	require.NoError(t, err)
+	consumer2, err := s.GetClient().NewConsumer("test_group_consumer", handler2)
+	s.Require().NoError(err)
 	defer consumer2.Stop()
 
-	// Запускаем обоих консюмеров
-	err = consumer1.ConsumeTopics([]string{topic})
-	require.NoError(t, err)
-	err = consumer2.ConsumeTopics([]string{topic})
-	require.NoError(t, err)
+	producer := s.CreateTestProducer()
 
-	// Ждем распределения сообщений между консюмерами
+	// When
+	err = consumer1.ConsumeTopics([]string{fixtures.TestTopics.GroupTest})
+	s.Require().NoError(err)
+
+	err = consumer2.ConsumeTopics([]string{fixtures.TestTopics.GroupTest})
+	s.Require().NoError(err)
+
+	time.Sleep(2 * time.Second)
+
+	for i := 0; i < messageCount; i++ {
+		msg := []byte("Message " + string(rune('0'+i)))
+		_, _, err := producer.Send(fixtures.TestTopics.GroupTest, []byte("key"), msg)
+		s.Require().NoError(err)
+	}
+
+	// Then
 	time.Sleep(5 * time.Second)
 
-	// Собираем статистику
-	count1 := len(messages1)
-	count2 := len(messages2)
-	totalReceived := count1 + count2
+	totalReceived := handler1.GetMessageCount() + handler2.GetMessageCount()
+	s.T().Logf("Consumer1: %d, Consumer2: %d, Total: %d/%d",
+		handler1.GetMessageCount(), handler2.GetMessageCount(), totalReceived, messageCount)
 
-	t.Logf("Consumer1 received: %d messages", count1)
-	t.Logf("Consumer2 received: %d messages", count2)
-	t.Logf("Total received: %d/%d", totalReceived, messageCount)
+	assert.Greater(s.T(), totalReceived, 0, "Should receive at least one message")
+	assert.LessOrEqual(s.T(), totalReceived, messageCount, "Should not receive more than sent")
+}
 
-	// Сообщения должны распределиться между консюмерами
-	assert.Greater(t, totalReceived, 0, "Should receive messages")
-	assert.LessOrEqual(t, totalReceived, messageCount, "Should not receive more than sent")
+// TestWithMultipleConfigurations - тест с разными конфигурациями
+func (s *KafkaTestSuite) TestWithMultipleConfigurations() {
+	tests := []struct {
+		name       string
+		configName string
+		topic      string
+		message    []byte
+		shouldWork bool
+	}{
+		{"Simple message", "test_producer", "test-topic", []byte("test1"), true},
+		{"JSON message", "test_producer", "test-topic", []byte(`{"test": true}`), true},
+		{"Empty message", "test_producer", "test-topic", []byte(""), true},
+	}
+
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			handler := handlers.NewTestHandler(1)
+			consumer := s.CreateTestConsumer(handler)
+			producer := s.CreateTestProducer()
+
+			err := consumer.ConsumeTopics([]string{tt.topic})
+			s.Require().NoError(err)
+
+			time.Sleep(2 * time.Second)
+
+			_, _, err = producer.Send(tt.topic, nil, tt.message)
+			if tt.shouldWork {
+				s.Require().NoError(err)
+
+				msg, err := handler.WaitForMessage(10 * time.Second)
+				s.Require().NoError(err)
+				assert.Equal(s.T(), tt.message, msg.Value)
+			}
+
+			consumer.Stop()
+		})
+	}
 }
