@@ -1,10 +1,10 @@
 package kafka
 
 import (
+	"KonnectKit/pkg/config"
+	"KonnectKit/pkg/consumer"
+	"KonnectKit/pkg/producer"
 	"fmt"
-	"kafkaLib/pkg/config"
-	"kafkaLib/pkg/consumer"
-	"kafkaLib/pkg/producer"
 
 	"github.com/IBM/sarama"
 )
@@ -33,6 +33,12 @@ func createSaramaConfig(base *config.BaseConfig) *sarama.Config {
 	saramaConfig.Net.DialTimeout = base.DialTimeout
 	saramaConfig.Net.ReadTimeout = base.ReadTimeout
 	saramaConfig.Net.WriteTimeout = base.WriteTimeout
+
+	// Версия Kafka (можно сделать настраиваемой)
+	saramaConfig.Version = sarama.V2_6_0_0
+
+	// ВАЖНО: Для SyncProducer нужно включить Return.Successes
+	saramaConfig.Producer.Return.Successes = true
 
 	return saramaConfig
 }

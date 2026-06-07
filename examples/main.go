@@ -1,9 +1,9 @@
 package main
 
 import (
+	"KonnectKit/pkg/config"
+	"KonnectKit/pkg/kafka"
 	"fmt"
-	"kafkaLib/pkg/config"
-	"kafkaLib/pkg/kafka"
 	"log"
 	"time"
 
@@ -21,7 +21,7 @@ func (h *UserEventHandler) HandleMessage(msg *sarama.ConsumerMessage) error {
 
 func main() {
 	// Загружаем конфигурацию
-	cfg, err := config.LoadConfig("config.yaml")
+	cfg, err := config.LoadConfig("E:\\git\\KonnectKit\\examples\\config.yaml")
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}

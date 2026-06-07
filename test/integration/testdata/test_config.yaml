@@ -1,0 +1,51 @@
+kafka:
+  base:
+    brokers: []  # Будет заполнен динамически в тесте
+    timeout: 30s
+    dial_timeout: 5s
+    read_timeout: 10s
+    write_timeout: 10s
+
+  producers:
+    test_producer:
+      required_acks: 1
+      max_retries: 3
+      retry_backoff: 100ms
+      batch_size: 16384
+      batch_timeout: 10ms
+      compression: snappy
+      partitioner: hash
+
+  consumers:
+    test_consumer:
+      group_id: test-group
+      auto_commit: true
+      auto_commit_interval: 1s
+      session_timeout: 30s
+      heartbeat_interval: 3s
+      max_wait_time: 250ms
+      min_fetch_size: 1
+      max_fetch_size: 1048576
+      start_offset: newest
+
+    test_group_consumer:
+      group_id: shared-group
+      auto_commit: true
+      auto_commit_interval: 1s
+      session_timeout: 30s
+      heartbeat_interval: 3s
+      max_wait_time: 250ms
+      min_fetch_size: 1
+      max_fetch_size: 1048576
+      start_offset: earliest
+
+    multi_topic_consumer:
+      group_id: multi-topic-group
+      auto_commit: true
+      auto_commit_interval: 1s
+      session_timeout: 30s
+      heartbeat_interval: 3s
+      max_wait_time: 250ms
+      min_fetch_size: 1
+      max_fetch_size: 1048576
+      start_offset: earliest

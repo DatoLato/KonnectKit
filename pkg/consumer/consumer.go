@@ -1,9 +1,9 @@
 package consumer
 
 import (
+	"KonnectKit/pkg/config"
 	"context"
 	"fmt"
-	"kafkaLib/pkg/config"
 	"sync"
 
 	"github.com/IBM/sarama"

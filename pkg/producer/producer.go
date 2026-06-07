@@ -1,9 +1,9 @@
 package producer
 
 import (
+	"KonnectKit/pkg/config"
 	"errors"
 	"fmt"
-	"kafkaLib/pkg/config"
 
 	"github.com/IBM/sarama"
 )
