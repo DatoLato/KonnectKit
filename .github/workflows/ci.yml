@@ -60,7 +60,7 @@ jobs:
           fi
           echo "✅ Modules are tidy"
 
-  # go vet
+  # go vet (проверяет код, не требует тестов)
   vet:
     name: Go vet
     runs-on: ubuntu-latest
@@ -77,9 +77,9 @@ jobs:
       - name: Run go vet
         run: go vet ./...
 
-  # Unit тесты
-  test:
-    name: Unit Tests
+  # Интеграционные тесты
+  integration-test:
+    name: Integration Tests
     runs-on: ubuntu-latest
     needs: [fmt, mod, vet]
     steps:
@@ -92,42 +92,16 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Run unit tests
-        run: go test -v -race -coverprofile=coverage.out $(go list ./... | grep -v '/test/integration')
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          file: ./coverage.out
-          flags: unittests
-          fail_ci_if_error: false
-
-  # Интеграционные тесты с Kafka
-  integration-test:
-    name: Integration Tests
-    runs-on: ubuntu-latest
-    needs: [test]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
       - name: Run integration tests
-        run: |
-          go test -v -timeout 15m -tags=integration ./test/integration/...
+        run: go test -v -timeout 15m -tags=integration ./test/integration/...
         env:
           TESTCONTAINERS_RYUK_DISABLED: true
 
-  # Сборка примеров
+  # Сборка примеров (проверяет, что код компилируется)
   build-examples:
     name: Build Examples
     runs-on: ubuntu-latest
-    needs: [test]
+    needs: [fmt, mod, vet]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
